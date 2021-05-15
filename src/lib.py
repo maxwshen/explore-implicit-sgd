@@ -26,7 +26,7 @@ def gradient(model):
     grads = []
     for param in model.parameters():
         grads.append(param.grad.view(-1))
-    grads = torch.cat(grads)
+    grads = torch.cat(grads).cpu()
     return torch.Tensor(grads)
 
 
