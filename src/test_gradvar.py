@@ -20,7 +20,7 @@ import numpy as np, pandas as pd
 import lib, net, arguments
 
 params = {
-    'x_dim': 1,
+    'x_dim': 5,
     'width': 8,
     'y_dim': 1,
 

@@ -21,6 +21,7 @@ def train(args, model, device, train_loader, optimizer, epoch):
     outputs = defaultdict(list)
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
+
         optimizer.zero_grad()
         output = model(data)
         loss = args['loss_func'](output, target)
@@ -32,7 +33,7 @@ def train(args, model, device, train_loader, optimizer, epoch):
             if args['dry_run']:
                 break
 
-            stats_d = lib.get_stats(model, device, train_loader, args)
+            stats_d = lib.get_stats(model, device, train_loader, optimizer, args)
 
             # Save outputs to dictionary
             outputs["epoch"].append(epoch)
