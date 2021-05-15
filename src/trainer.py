@@ -13,7 +13,9 @@ import numpy as np, pandas as pd
 
 import lib
 
-
+'''
+    Train/test
+'''
 def train(args, model, device, train_loader, optimizer, epoch):
     model.train()
     outputs = defaultdict(list)
@@ -22,29 +24,29 @@ def train(args, model, device, train_loader, optimizer, epoch):
         optimizer.zero_grad()
         output = model(data)
 
-        if args['loss_type'] == 'loss':
-            loss = F.nll_loss(output, target)
-        elif args['loss_type'] == 'grad_var':
-            loss = lib.calc_grad_var(model, device, train_loader)
-        elif args['loss_type'] == 'loss_var':
-            loss = lib.calc_loss_var(model, device, train_loader)
+        loss = args['loss_func'](output, target)
+
+        # if args['loss_type'] == 'loss':
+        #     loss = F.nll_loss(output, target)
+        # elif args['loss_type'] == 'grad_var':
+        #     loss = lib.calc_grad_var(model, device, train_loader)
+        # elif args['loss_type'] == 'loss_var':
+        #     loss = lib.calc_loss_var(model, device, train_loader)
 
         loss.backward()
 
         optimizer.step()
         if batch_idx % args['log_interval'] == 0:
-            # grad_norm = lib.gradient_norm(model)
-            print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} ({100. * batch_idx / len(train_loader):.0f}%)]  Loss: {loss.item():.3f}  Grad norm: {grad_norm:.2f}')
+            print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} ({100. * batch_idx / len(train_loader):.0f}%)]  Loss: {loss.item():.3f}')
             if args['dry_run']:
                 break
 
-            stats_d = lib.get_stats(model, device, train_loader)
+            stats_d = lib.get_stats(model, device, train_loader, args)
 
             # Save outputs to dictionary
             outputs["epoch"].append(epoch)
             outputs["batch_num"].append(batch_idx * len(data))
-            outputs["loss"].append(loss.item())
-            # outputs["grad_norm"].append(grad_norm)
+            outputs["main loss"].append(loss.item())
             for stat in stats_d:
                 outputs[stat].append(stats_d[stat])
 
@@ -53,7 +55,7 @@ def train(args, model, device, train_loader, optimizer, epoch):
     df.to_csv(os.path.join(args['results_dir'], f"outputs_train_epoch{epoch}.csv"))
 
 
-def test(model, device, test_loader, loss_recorder_dict):
+def test(model, device, test_loader, args, loss_recorder_dict):
     model.eval()
     test_loss = 0
     correct = 0
@@ -61,7 +63,7 @@ def test(model, device, test_loader, loss_recorder_dict):
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
             output = model(data)
-            test_loss += F.nll_loss(output, target, reduction='sum').item()  # sum up batch loss
+            test_loss += args['loss_func'](output, target, reduction='sum').item()  # sum up batch loss
             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
             correct += pred.eq(target.view_as(pred)).sum().item()
 
@@ -72,12 +74,16 @@ def test(model, device, test_loader, loss_recorder_dict):
         100. * correct / len(test_loader.dataset)))
     # Update the loss recorder
     loss_recorder_dict['loss'].append(test_loss)
-    return loss_recorder_dict
+    return
 
 
+'''
+    Main trainer
+'''
 def main(model, train_loader, test_loader, args):
     # Training settings
     print(args)
+    lib.write_args(args)
 
     torch.manual_seed(args['seed'])
 
@@ -93,7 +99,7 @@ def main(model, train_loader, test_loader, args):
     test_loss_recorder_dict = defaultdict(list)
     for epoch in range(1, args['epochs'] + 1):
         train(args, model, device, train_loader, optimizer, epoch)
-        test_loss_recorder_dict = test(model, device, test_loader, test_loss_recorder_dict)
+        test(model, device, test_loader, args, test_loss_recorder_dict)
         test_loss_recorder_dict['epoch'].append(epoch)
         scheduler.step()
 

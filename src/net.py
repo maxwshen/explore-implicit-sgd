@@ -8,9 +8,25 @@ from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
 
 
+class MLP(nn.Module):
+    def __init__(self, inp_dim, width, out_dim):
+        super(MLP, self).__init__()
+        self.fc1 = nn.Linear(inp_dim, width)
+        self.fc2 = nn.Linear(width, width)
+        self.fc3 = nn.Linear(width, out_dim)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = F.relu(x)
+        x = self.fc2(x)
+        x = F.relu(x)
+        output = self.fc3(x)
+        return output
+
+
 class MNIST_Net(nn.Module):
     def __init__(self):
-        super(Net, self).__init__()
+        super(MNIST_Net, self).__init__()
         self.conv1 = nn.Conv2d(1, 32, 3, 1)
         self.conv2 = nn.Conv2d(32, 64, 3, 1)
         self.dropout1 = nn.Dropout(0.25)
