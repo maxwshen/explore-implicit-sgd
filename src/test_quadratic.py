@@ -1,6 +1,5 @@
 '''
    Evaluate lib.optimize_grad_squared_norm
-   TODO: Construct batches, simple model, loss function (need to make flexible)
 
    f(x) = x.T @ A @ x, for SPD matrix A. Maps (N,1) -> (1).
    Data: A
@@ -45,7 +44,7 @@ def train_special(args, model, device, train_loader, optimizer, epoch):
         optimizer.zero_grad()
 
         stats, grad = lib.optimize_grad_squared_norm(model,
-            device, (data, target), args)
+            device, (data, target), optimizer, args)
         lib.assign_gradient_to_model(model, grad)
 
         print(model(data))
@@ -64,7 +63,7 @@ def train_special(args, model, device, train_loader, optimizer, epoch):
                 break
 
             stats_d = lib.get_stats(model,
-                device, train_loader, args, samplesize=1)
+                device, train_loader, args)
 
             # Save outputs to dictionary
             outputs["epoch"].append(epoch)
@@ -149,6 +148,7 @@ def main():
 
     convex_data = ConvexDataset()
 
+    args['stats_samplesize'] = 1
     args['loss_func'] = convex_data.loss
 
     model = PassThroughModel()

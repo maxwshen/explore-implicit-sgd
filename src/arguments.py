@@ -9,8 +9,6 @@ args = {
 
     'epochs': 200,
 
-    'loss_type': 'loss',
-
     'lr': 0.1,
     'gamma': 0.7,
 
@@ -25,6 +23,9 @@ args = {
     'data_dir': '../data/',
     'results_dir': '../out/' + str(curr_time).replace(' ', '_') + '/',
 
-    # function takes (output, target)
+    # function takes (output, target). Expected to be overwritten.
     'loss_func': None,
+
+    'stats_samplesize': 5,
+    'num_eigens_hessian_approx': 3,
 }

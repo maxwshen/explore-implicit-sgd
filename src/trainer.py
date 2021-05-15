@@ -23,19 +23,10 @@ def train(args, model, device, train_loader, optimizer, epoch):
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
         output = model(data)
-
         loss = args['loss_func'](output, target)
-
-        # if args['loss_type'] == 'loss':
-        #     loss = F.nll_loss(output, target)
-        # elif args['loss_type'] == 'grad_var':
-        #     loss = lib.calc_grad_var(model, device, train_loader)
-        # elif args['loss_type'] == 'loss_var':
-        #     loss = lib.calc_loss_var(model, device, train_loader)
-
         loss.backward()
-
         optimizer.step()
+
         if batch_idx % args['log_interval'] == 0:
             print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} ({100. * batch_idx / len(train_loader):.0f}%)]  Loss: {loss.item():.3f}')
             if args['dry_run']:

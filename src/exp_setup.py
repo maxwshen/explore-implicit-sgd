@@ -2,6 +2,7 @@
 '''
 
 import torch
+import torch.nn.functional as F
 import data, trainer, net, arguments
 
 args = arguments.args
@@ -9,6 +10,7 @@ args = arguments.args
 def local_mnist():
     # laptop
     args['data_dir'] = '../data/'
+    args['loss_func'] = F.nll_loss
 
     train_loader, test_loader = data.mnist(args)
     model = net.MNIST_Net()

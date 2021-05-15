@@ -1,6 +1,5 @@
 '''
-   Evaluate lib.optimize_grad_squared_norm
-   TODO: Construct batches, simple model, loss function (need to make flexible)
+   Evaluate lib.optimize_grad_var
 
    f(x) = x.T @ A @ x, for SPD matrix A. Maps (N,1) -> (1).
    Data: (x, f(x)) for random x
@@ -21,17 +20,22 @@ import numpy as np, pandas as pd
 import lib, net, arguments
 
 params = {
-    'x_dim': 10,
-    'width': 32,
+    'x_dim': 1,
+    'width': 8,
     'y_dim': 1,
 
-    'N': 5000,
-    'batch_size': 64,
+    'N': 15,
+    'batch_size': 5,
     'A_scale': 0.01,
-    'noise': 0.2,
+    'noise': 0.01,
     'area_lim': 10,
 
     'num_eigens_hessian_approx': 1,
+    'lr': 1e-1,
+
+    # num minibatches. Must satisfy
+    #   stats_samplesize * batch_size < N.
+    'stats_samplesize': 3,
 }
 
 '''
@@ -40,16 +44,21 @@ params = {
 def train_special(args, model, device, train_loader, optimizer, epoch):
     model.train()
     
-    loss_func = F.mse_loss
-
+    stats = {}
     outputs = defaultdict(list)
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
 
-        stats, grad = lib.optimize_grad_squared_norm(model,
-            device, loss_func, (data, target), args)
-        lib.assign_gradient_to_model(model, grad)
+        if epoch <= 10:
+            output = model(data)
+            loss = args['loss_func'](output, target)
+            loss.backward()
+            print(f'Loss: {loss.item():.3f}')
+        else:
+            stats, grad = lib.optimize_grad_var(model,
+                device, train_loader, optimizer, args)
+            lib.assign_gradient_to_model(model, grad)
 
         optimizer.step()
 
@@ -60,7 +69,7 @@ def train_special(args, model, device, train_loader, optimizer, epoch):
             if args['dry_run']:
                 break
 
-            stats_d = lib.get_stats(model, device, train_loader, args)
+            stats_d = lib.get_stats(model, device, train_loader, optimizer, args)
 
             # Save outputs to dictionary
             outputs["epoch"].append(epoch)
@@ -87,8 +96,8 @@ def trainer(model, train_loader, args):
 
     model.to(device)
 
-    # optimizer = optim.Adadelta(model.parameters(), lr=args['lr'])
-    optimizer = optim.SGD(model.parameters(), lr=args['lr'])
+    optimizer = optim.Adadelta(model.parameters(), lr=args['lr'])
+    # optimizer = optim.SGD(model.parameters(), lr=args['lr'])
 
     scheduler = StepLR(optimizer, step_size=1, gamma=args['gamma'])
 
@@ -105,7 +114,6 @@ def trainer(model, train_loader, args):
 '''
     Data
 '''
-
 from sklearn.datasets import make_spd_matrix
 class ConvexDataset(Dataset):
     def __init__(self):
@@ -126,34 +134,26 @@ class ConvexDataset(Dataset):
         self.Y = torch.Tensor( np.array(dd['y']) ).squeeze(-1)
         self.A = A
 
-
     def __len__(self):
         return len(self.X)
 
-
     def __getitem__(self, idx):
-        return self.X[idx], self.Y[idx]
+        return torch.Tensor(self.X[idx]), torch.Tensor(self.Y[idx])
 
 
 def main():
-
     args = arguments.args
-    for p in params:
-        if p not in args:
-            args[p] = params[p]
+    args.update(params)
 
     args['loss_func'] = F.mse_loss
-    args['lr'] = 1e-4
 
-    model = net.MLP(
-        params['x_dim'], 
+    model = net.MLP(params['x_dim'], 
         params['width'], 
-        params['y_dim']
-    )
+        params['y_dim'])
 
     convex_data = ConvexDataset()
     train_loader = DataLoader(convex_data,
-        batch_size=params['batch_size'], shuffle=True)
+        batch_size=params['batch_size'], shuffle=False)
 
     trainer(model, train_loader, args)
     return
