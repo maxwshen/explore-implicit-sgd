@@ -4,6 +4,7 @@
 import torch
 import torch.nn.functional as F
 import data, trainer, net, arguments, lib, dataloader
+from PyTorch_CIFAR10.cifar10_models.resnet import resnet18
 
 args = arguments.args
 
@@ -43,6 +44,30 @@ def local_pretrained_mnist_lossvar():
     trainer.main(model, batch_loader, test_loader, args)
     return
 
+def local_pretrained_cifar10_lossvar():
+    # laptop
+    args['data_dir'] = '../data/'
+    args['loss_func'] = F.cross_entropy
+    # args['learning_func_name'] = 'loss_var'
+    args['learning_func_name'] = 'grad_var'
+    args['stats_samplesize'] = 3
+    args['num_eigens_hessian_approx'] = 1
+    args['lr'] = 1e-9
+    args['log_interval'] = 1
+    args['batch_size'] = 128
+
+    train_loader, test_loader = data.cifar10(args)
+
+    batches = list(lib.iter_sample_fast(train_loader, args['stats_samplesize']))
+    batch_loader = dataloader.get_subset_batch_loader(batches, args)
+    args['subset_batches'] = True 
+    print(f'\nTraining only on {args["stats_samplesize"]} batches of size {args["batch_size"]}!\n')
+
+    # https://github.com/huyvnphan/PyTorch_CIFAR10
+    model = resnet18(pretrained=True)
+
+    trainer.main(model, batch_loader, test_loader, args)
+    return
 '''
     On gcloud or aws, overwrite:
     args['data_dir'], if data is already downloaded
@@ -54,4 +79,5 @@ def local_pretrained_mnist_lossvar():
 
 if __name__ == '__main__':
     # local_mnist()
-    local_pretrained_mnist_lossvar()
+    # local_pretrained_mnist_lossvar()
+    local_pretrained_cifar10_lossvar()
