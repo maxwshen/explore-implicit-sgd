@@ -58,14 +58,14 @@ def eigen_approx_hessian(model, batches, args):
     return torch.Tensor(eigenvals.copy()), torch.Tensor(eigenvecs.copy())
     
 
-def assign_gradient_to_model(model, gradient):
+def assign_gradient_to_model(model, gradient, device):
     '''
         Manually override gradient
     '''
     gradient = torch.Tensor(gradient)
     for param in model.parameters():
         size = np.prod(param.grad.shape)
-        g = gradient[:size]
+        g = gradient[:size].to(device)
         param.grad = g.reshape(param.grad.shape)
         gradient = gradient[size:]
     assert len(gradient) == 0, 'ERROR: Gradient shape did not match num. parameters'

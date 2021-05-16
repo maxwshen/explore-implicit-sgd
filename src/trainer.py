@@ -36,7 +36,7 @@ def train(args, model, device, train_loader, optimizer, epoch):
         elif args['learning_func_name'] == 'grad_var':
             stats, grad = lib.optimize_grad_var(model, device,
                     train_loader, optimizer, args)
-            lib.assign_gradient_to_model(model, grad)
+            lib.assign_gradient_to_model(model, grad, device)
         elif args['learning_func_name'] == 'loss_var':
             loss_var = lib.calc_loss_var(model, device, train_loader, args)
             loss_var.backward()
