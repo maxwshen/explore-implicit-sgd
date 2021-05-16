@@ -20,12 +20,15 @@ import numpy as np, pandas as pd
 import lib, net, arguments
 
 params = {
-    'x_dim': 5,
+    'x_dim': 10,
+    # 2048 incurs out of memory error, allows testing scalability
+    # 'width': 1024,
+    # 'width': 2048,
     'width': 8,
     'y_dim': 1,
 
-    'N': 15,
-    'batch_size': 5,
+    'N': 512,
+    'batch_size': 128,
     'A_scale': 0.01,
     'noise': 0.01,
     'area_lim': 10,
@@ -35,7 +38,7 @@ params = {
 
     # num minibatches. Must satisfy
     #   stats_samplesize * batch_size < N.
-    'stats_samplesize': 3,
+    'stats_samplesize': 4,
 }
 
 '''
@@ -59,6 +62,7 @@ def train_special(args, model, device, train_loader, optimizer, epoch):
             stats, grad = lib.optimize_grad_var(model,
                 device, train_loader, optimizer, args)
             lib.assign_gradient_to_model(model, grad)
+            args['log_interval'] = 1
 
         optimizer.step()
 
@@ -70,6 +74,8 @@ def train_special(args, model, device, train_loader, optimizer, epoch):
                 break
 
             stats_d = lib.get_stats(model, device, train_loader, optimizer, args)
+            for k, v in stats_d.items():
+                print(f'{k}:\t{v}')
 
             # Save outputs to dictionary
             outputs["epoch"].append(epoch)
@@ -87,6 +93,7 @@ def train_special(args, model, device, train_loader, optimizer, epoch):
 '''
 def trainer(model, train_loader, args):
     # Training settings
+    args['num_params'] = sum([np.prod(p.size()) for p in model.parameters()])
     print(args)
     lib.write_args(args)
 

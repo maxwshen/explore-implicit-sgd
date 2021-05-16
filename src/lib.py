@@ -19,10 +19,11 @@ import dataloader
 def gradient_norm(model):
     # Requires loss.backward() first
     norm = [p.grad.data.norm(2).item()**2 for p in model.parameters()]
-    return sum(norm)**(1.0/2)
+    return torch.Tensor([sum(norm)**(1.0/2)])
 
 
 def gradient(model):
+    # Requires loss.backward() first
     grads = []
     for param in model.parameters():
         grads.append(param.grad.view(-1))
@@ -32,30 +33,30 @@ def gradient(model):
 
 def gradient_variance(grads):
     # Input: List of gradients
-    mean_grad = np.mean(grads, axis=0)
+    assert len(grads) > 1, 'ERROR: Attempted to take variance of <2 items'
+    mean_grad = torch.mean(grads, axis=0)
     assert mean_grad.shape == grads[0].shape
-    grad_var = sum([np.linalg.norm(g - mean_grad, 2)**2 for g in grads])
+    grad_var = sum([torch.linalg.norm(g - mean_grad, 2)**2 for g in grads])
     return grad_var, mean_grad
 
 
-def eigen_approx_hessian(model, batch, args):
+def eigen_approx_hessian(model, batches, args):
     '''
         Eigen-approximation to Hessian.
         https://github.com/noahgolmant/pytorch-hessian-eigenthings
 
         To compute Hessian on a single minibatch, we construct a 
         dataloader that provides only that batch.
-
-        Returns np.arrays
     '''
-    loader = dataloader.SingleBatchLoader(batch)
+    loader = dataloader.get_subset_batch_loader(batches, args)
     eigenvals, eigenvecs = compute_hessian_eigenthings(model,
             loader, args['loss_func'],
             num_eigenthings=args['num_eigens_hessian_approx'],
             use_gpu=args['use_cuda'],
             full_dataset=True)
-    return eigenvals, eigenvecs
-
+    eigenvals = np.expand_dims(eigenvals, -1)
+    return torch.Tensor(eigenvals.copy()), torch.Tensor(eigenvecs.copy())
+    
 
 def assign_gradient_to_model(model, gradient):
     '''
@@ -72,6 +73,100 @@ def assign_gradient_to_model(model, gradient):
 
 
 '''
+    Special gradients
+'''
+def grad_of_grad_var(mean_grad, dd):
+    '''
+        Uses fast eigenapproximation for batch-wise Hessian and mean Hessian.
+        Uses proper order of matrix multiplication to avoid large memory cost.
+
+        For B total NxN matrix with m-rank eigenapproximation,
+        Time:  O(B N M^2)
+        Space: O(NM)
+    '''
+    learning_gradient = torch.zeros(mean_grad.shape)
+    mean_evals = dd['mean_eigenvalues']
+    mean_evecs = dd['mean_eigenvectors']
+    mean_hessian_left = mean_evecs.T @ mean_evals
+    for g, evals, evecs in zip(dd['grad'], dd['eigenvalues'], dd['eigenvectors']):
+        grad_diff = (g - mean_grad)
+        local_term = (evecs.T @ evals) @ (evecs @ grad_diff)
+        global_term = mean_hessian_left @ (mean_evecs @ grad_diff)
+        lg = 2 * (local_term - global_term)
+        learning_gradient += lg
+    return learning_gradient
+
+
+def grad_of_grad_var_memory(mean_grad, dd):
+    '''
+        DEPRECATED
+        Explicitly stores full Hessians in memory - doesn't scale.
+
+        For B total NxN matrix with m-rank eigenapproximation,
+        Time:  O(B N^2 M + M N^2)
+        Space: O(BN^2)
+    '''
+    hessians = [evec.T @ evals @ evec
+                for evec, evals in zip(dd['eigenvectors'], dd['eigenvalues'])]
+    mean_hessian = torch.mean(hessians, axis=0)
+    assert mean_hessian.shape == hessians[0].shape
+
+    learning_gradient = torch.zeros(mean_grad.shape)
+    for g, h in zip(dd['grad'], hessians):
+        lg = 2 * (h - mean_hessian) @ (g - mean_grad)
+        learning_gradient += lg
+    return learning_gradient
+
+
+def compute_row_from_eigendecomp(eigenvecs, eigenvals, i):
+    '''
+        For NxN matrix with m-rank eigenapproximation,
+        computes a (1,N) row in O(M^2 + NM^2) = O(NM^2) time.
+        (1,M) (M,M) (M,N) -> (1,N)
+    '''
+    return eigenvecs.T[i] @ eigenvals @ eigenvecs
+
+
+def grad_of_grad_var_compute(mean_grad, dd):
+    '''
+        DEPRECATED
+        Does not store full Hessians in memory,
+        but calculates mean Hessian from Hessians of each minibatch.
+        Also scales poorly.
+
+        LG[i] = 2 * (∇^2 L_k(Θ)[i] - ∇^2 L(Θ)[i]) @ (∇L_k(Θ) - ∇L(Θ))
+                    (1,N)                     (N,1)
+
+        For B total NxN matrix with m-rank eigenapproximation,
+        Time:  O(B N^2 M^2)
+        Space: O(BN)
+    '''
+    curr_time = datetime.datetime.now()
+    N = mean_grad.shape[0]
+    B = len(dd['eigenvectors'])
+
+    learning_gradient = torch.zeros(mean_grad.shape)
+    for i in range(N):
+        hrows = torch.empty((B, N))
+        for j, (eigenvecs, eigenvals) in enumerate(
+                zip(dd['eigenvectors'], dd['eigenvalues'])):
+            hrow = compute_row_from_eigendecomp(eigenvecs, eigenvals, i)
+            hrows[j] = hrow
+        mean_hrow = torch.mean(hrows, axis=0)
+
+        for g, hrow in zip(dd['grad'], hrows):
+            learning_gradient[i] += 2 * (hrow - mean_hrow) @ (g - mean_grad)
+
+        t = datetime.datetime.now()
+        diff = t - curr_time
+        print(f'\t{i}/{N}: {diff}')
+        curr_time = t
+
+
+    return learning_gradient
+
+
+'''
     Stats
 '''
 def get_gradients_over_minibatches(model, device, train_loader, optimizer, args,
@@ -80,8 +175,24 @@ def get_gradients_over_minibatches(model, device, train_loader, optimizer, args,
         Process args['stats_samplesize'] minibatches, collecting gradients and optionally Hessians.
         Minibatches from the dataloader are not consumed by anything: we sample randomly from all minibatches in the current epoch.
     '''
-    dd = defaultdict(list)
-    for data, target in iter_sample_fast(train_loader, args['stats_samplesize']):
+    num_minibatches = args['stats_samplesize']
+    num_eigens = args['num_eigens_hessian_approx']
+    num_params = args['num_params']
+
+    dd = {
+        'loss': torch.empty((num_minibatches, 1)),
+        'grad': torch.empty((num_minibatches, num_params)),
+        'grad norm': torch.empty((num_minibatches, 1)),
+    }
+    if get_hessian:
+        dd['eigenvalues'] = torch.empty((num_minibatches, num_eigens, num_eigens))
+        dd['eigenvectors'] = torch.empty((num_minibatches, num_eigens, num_params))
+        dd['mean eigenvalues'] = torch.empty((num_eigens, num_eigens))
+        dd['mean eigenvectors'] = torch.empty((num_eigens, num_params))
+        batches = []        
+
+    for i, batch in enumerate(iter_sample_fast(train_loader, num_minibatches)):
+        data, target = batch
         data, target = data.to(device), target.to(device)
         output = model(data)
 
@@ -89,16 +200,22 @@ def get_gradients_over_minibatches(model, device, train_loader, optimizer, args,
         loss = args['loss_func'](output, target)
         loss.backward()
 
-        grad = np.array(gradient(model).cpu())
-        dd['loss'].append(loss.item())
-        dd['grad'].append(grad)
-        dd['grad norm'].append(gradient_norm(model))
+        grad = torch.Tensor(gradient(model).cpu())
+        dd['loss'][i] = torch.Tensor([loss.item()])
+        dd['grad'][i] = grad
+        dd['grad norm'][i] = gradient_norm(model)
 
         if get_hessian:
-            eigenvals, eigenvecs = eigen_approx_hessian(model, (data, target),
-                                                        args)
-            dd['eigenvalues'].append(np.expand_dims(eigenvals, -1))
-            dd['eigenvectors'].append(eigenvecs)
+            eigenvals, eigenvecs = eigen_approx_hessian(model, [batch], args)
+            dd['eigenvalues'][i]  = eigenvals
+            dd['eigenvectors'][i] = eigenvecs
+            batches.append(batch)
+
+    if get_hessian:
+        mean_eigenvals, mean_eigenvecs = eigen_approx_hessian(model,
+                batches, args)
+        dd['mean_eigenvalues'] = mean_eigenvals
+        dd['mean_eigenvectors'] = mean_eigenvecs
 
     return dd
 
@@ -121,17 +238,7 @@ def optimize_grad_var(model, device, train_loader, optimizer, args):
             optimizer, args, get_hessian=True)
     grad_var, mean_grad = gradient_variance(dd['grad'])
     
-    # Explicitly stores full Hessians in memory - doesn't scale
-    # Potential trick - rotate one eigendecomposition to the other, then sum?
-    hessians = [evec.T @ evals @ evec
-                for evec, evals in zip(dd['eigenvectors'], dd['eigenvalues'])]
-    mean_hessian = np.mean(hessians, axis=0)
-    assert mean_hessian.shape == hessians[0].shape
-
-    learning_gradient = np.zeros(mean_grad.shape)
-    for g, h in zip(dd['grad'], hessians):
-        lg = 2 * (h - mean_hessian) @ (g - mean_grad)
-        learning_gradient += lg
+    learning_gradient = grad_of_grad_var(mean_grad, dd)
 
     losses = np.array(dd['loss'])
     grad_norms = np.array(dd['grad norm'])
@@ -202,7 +309,6 @@ def get_stats(model, device, train_loader, optimizer, args):
         Loss, Gradient norm, Gradient
       Randomly samples batches from `train_loader`.
     '''
-    model.train()
     dd = get_gradients_over_minibatches(model, device, train_loader,
             optimizer, args)
 
@@ -215,10 +321,8 @@ def get_stats(model, device, train_loader, optimizer, args):
         'loss_var': np.var(losses), 
         'gradnorm_mean': np.mean(grad_norms),
         'gradnorm_var': np.var(grad_norms),
-        'grad_var': grad_var,
+        'grad_var': grad_var.item(),
     }
-    for k, v in stats_d.items():
-        print(f'{k}:\t{v}')
     return stats_d
 
 

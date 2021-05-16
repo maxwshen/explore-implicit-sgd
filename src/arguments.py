@@ -25,7 +25,9 @@ args = {
 
     # function takes (output, target). Expected to be overwritten.
     'loss_func': None,
+    'learning_func_name': 'standard',
+    # [standard, grad_var, loss_var]
 
     'stats_samplesize': 5,
-    'num_eigens_hessian_approx': 3,
+    'num_eigens_hessian_approx': 1,
 }

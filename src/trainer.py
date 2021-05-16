@@ -11,13 +11,18 @@ from torch.optim.lr_scheduler import StepLR
 import os, random, argparse
 import numpy as np, pandas as pd
 
-import lib
+import lib, dataloader
 
 '''
     Train/test
 '''
 def train(args, model, device, train_loader, optimizer, epoch):
     model.train()
+    if args['subset_batches']:
+        # Running get_stats twice does not produce identical output. Happens due to dropout and stochastic layers. Switching to model.eval() fixes the problem. Preferred for investigating effect of optimizing grad/loss var on small subset of batches on pretrained model, to get cleaner stats.
+        model.eval()
+
+    stats = {}
     outputs = defaultdict(list)
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
@@ -25,15 +30,30 @@ def train(args, model, device, train_loader, optimizer, epoch):
         optimizer.zero_grad()
         output = model(data)
         loss = args['loss_func'](output, target)
-        loss.backward()
+
+        if args['learning_func_name'] == 'standard':
+            loss.backward()
+        elif args['learning_func_name'] == 'grad_var':
+            stats, grad = lib.optimize_grad_var(model, device,
+                    train_loader, optimizer, args)
+            lib.assign_gradient_to_model(model, grad)
+        elif args['learning_func_name'] == 'loss_var':
+            loss_var = lib.calc_loss_var(model, device, train_loader, args)
+            loss_var.backward()
+            stats['Loss var'] = loss_var
+
         optimizer.step()
 
         if batch_idx % args['log_interval'] == 0:
-            print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} ({100. * batch_idx / len(train_loader):.0f}%)]  Loss: {loss.item():.3f}')
+            print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} ({100. * batch_idx / len(train_loader):.0f}%)] Loss standard: {loss.item():.3f}')
+            for k, v in stats.items():
+                print(f'{k}: {v}')
             if args['dry_run']:
                 break
 
             stats_d = lib.get_stats(model, device, train_loader, optimizer, args)
+            for k, v in stats_d.items():
+                print(f'{k}:\t{v}')
 
             # Save outputs to dictionary
             outputs["epoch"].append(epoch)
@@ -45,6 +65,7 @@ def train(args, model, device, train_loader, optimizer, epoch):
     # At the end of epoch save to file
     df = pd.DataFrame.from_dict(outputs)
     df.to_csv(os.path.join(args['results_dir'], f"outputs_train_epoch{epoch}.csv"))
+    return
 
 
 def test(model, device, test_loader, args, loss_recorder_dict):
@@ -64,7 +85,6 @@ def test(model, device, test_loader, args, loss_recorder_dict):
     print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
-    # Update the loss recorder
     loss_recorder_dict['loss'].append(test_loss)
     return
 
@@ -74,6 +94,7 @@ def test(model, device, test_loader, args, loss_recorder_dict):
 '''
 def main(model, train_loader, test_loader, args):
     # Training settings
+    args['num_params'] = sum([np.prod(p.size()) for p in model.parameters()])
     print(args)
     lib.write_args(args)
 
