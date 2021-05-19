@@ -61,7 +61,7 @@ def train_special(args, model, device, train_loader, optimizer, epoch):
         else:
             stats, grad = lib.optimize_grad_var(model,
                 device, train_loader, optimizer, args)
-            lib.assign_gradient_to_model(model, grad)
+            lib.assign_gradient_to_model(model, grad, device)
             args['log_interval'] = 1
 
         optimizer.step()

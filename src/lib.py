@@ -37,6 +37,7 @@ def gradient_variance(grads):
     mean_grad = torch.mean(grads, axis=0)
     assert mean_grad.shape == grads[0].shape
     grad_var = sum([torch.linalg.norm(g - mean_grad, 2)**2 for g in grads])
+    grad_var /= len(grads)
     return grad_var, mean_grad
 
 
@@ -67,6 +68,20 @@ def assign_gradient_to_model(model, gradient, device):
         size = np.prod(param.grad.shape)
         g = gradient[:size].to(device)
         param.grad = g.reshape(param.grad.shape)
+        gradient = gradient[size:]
+    assert len(gradient) == 0, 'ERROR: Gradient shape did not match num. parameters'
+    return
+
+
+def add_gradient_to_model(model, gradient, device):
+    '''
+        Adds gradient
+    '''
+    gradient = torch.Tensor(gradient)
+    for param in model.parameters():
+        size = np.prod(param.grad.shape)
+        g = gradient[:size].to(device)
+        param.grad += g.reshape(param.grad.shape)
         gradient = gradient[size:]
     assert len(gradient) == 0, 'ERROR: Gradient shape did not match num. parameters'
     return
@@ -217,6 +232,7 @@ def get_gradients_over_minibatches(model, device, train_loader, optimizer, args,
         dd['mean_eigenvalues'] = mean_eigenvals
         dd['mean_eigenvectors'] = mean_eigenvecs
 
+    optimizer.zero_grad()
     return dd
 
 
@@ -273,16 +289,15 @@ def optimize_grad_squared_norm(model, device, batch, optimizer, args):
 
     stats_d = {
         'Loss val': loss_val,
-        'Grad squared norm': grad_squared_norm,
+        'Grad squared norm': grad_squared_norm.item(),
     }
 
     # Compute gradient on grad squared norm for learning
     g = gradient(model)
     eigenvals, eigenvecs = eigen_approx_hessian(model,
-        batch, args)
-    approx_hessian = eigenvecs.T @ np.diag(eigenvals) @ eigenvecs
-
-    learning_gradient = 2 * approx_hessian @ np.array(g)
+        [batch], args)
+    learning_gradient = 2 * (eigenvecs.T @ eigenvals) @ (eigenvecs @ g)
+    optimizer.zero_grad()
     return stats_d, learning_gradient
 
 

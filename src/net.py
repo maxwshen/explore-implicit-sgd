@@ -24,6 +24,15 @@ class MLP(nn.Module):
         return output
 
 
+class Linear(nn.Module):
+    def __init__(self, inp_dim, out_dim):
+        super(Linear, self).__init__()
+        self.fc1 = nn.Linear(inp_dim, out_dim)
+
+    def forward(self, x):
+        return self.fc1(x)
+
+
 class MNIST_Net(nn.Module):
     def __init__(self):
         super(MNIST_Net, self).__init__()
